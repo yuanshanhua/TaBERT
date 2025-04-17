@@ -8,11 +8,9 @@
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-
 from typing import Union
 
-from table_bert.utils import BertForMaskedLM
-from table_bert.config import TableBertConfig, BERT_CONFIGS
+from ..config import TableBertConfig
 
 
 class VerticalAttentionTableBertConfig(TableBertConfig):
@@ -21,7 +19,7 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         num_vertical_attention_heads=6,
         num_vertical_layers=3,
         sample_row_num=3,
-        table_mask_strategy='column',
+        table_mask_strategy="column",
         predict_cell_tokens=False,
         # vertical_layer_use_intermediate_transform=True,
         initialize_from=None,
@@ -44,12 +42,12 @@ class VerticalAttentionTableBertConfig(TableBertConfig):
         parser.add_argument("--num_vertical_attention_heads", type=int, default=6)
         parser.add_argument("--num_vertical_layers", type=int, default=3)
         parser.add_argument("--sample_row_num", type=int, default=3)
-        parser.add_argument("--predict_cell_tokens", action='store_true', dest='predict_cell_tokens')
-        parser.add_argument("--no_predict_cell_tokens", action='store_false', dest='predict_cell_tokens')
+        parser.add_argument("--predict_cell_tokens", action="store_true", dest="predict_cell_tokens")
+        parser.add_argument("--no_predict_cell_tokens", action="store_false", dest="predict_cell_tokens")
         parser.set_defaults(predict_cell_tokens=False)
 
         parser.add_argument("--initialize_from", type=Path, default=None)
 
     @staticmethod
     def is_valid_config_file(file_path: Union[str, Path]):
-        return 'num_vertical_layers' in json.load(open(file_path))
+        return "num_vertical_layers" in json.load(open(file_path))

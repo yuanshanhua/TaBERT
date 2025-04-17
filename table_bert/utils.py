@@ -5,8 +5,12 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import logging
 from enum import Enum
+
+import torch
+from transformers.activations import gelu
+from transformers.models.bert import BertConfig, BertForMaskedLM, BertForPreTraining, BertModel, BertTokenizer
+from transformers.models.bert.modeling_bert import BertIntermediate, BertLMPredictionHead, BertOutput, BertSelfOutput
 
 
 class TransformerVersion(Enum):
@@ -14,29 +18,20 @@ class TransformerVersion(Enum):
     TRANSFORMERS = 1
 
 
-TRANSFORMER_VERSION = None
+hf_flag = "new"
+TRANSFORMER_VERSION = TransformerVersion.TRANSFORMERS
+BertLayerNorm = torch.nn.LayerNorm
 
-
-try:
-    from pytorch_pretrained_bert.modeling import (
-        BertForMaskedLM, BertForPreTraining, BertModel,
-        BertConfig,
-        BertSelfOutput, BertIntermediate, BertOutput,
-        BertLMPredictionHead, BertLayerNorm, gelu
-    )
-    from pytorch_pretrained_bert.tokenization import BertTokenizer
-
-    hf_flag = 'old'
-    TRANSFORMER_VERSION = TransformerVersion.PYTORCH_PRETRAINED_BERT
-    logging.warning('You are using the old version of `pytorch_pretrained_bert`')
-except ImportError:
-    from transformers.tokenization_bert import BertTokenizer    # noqa
-    from transformers.modeling_bert import (    # noqa
-        BertForMaskedLM, BertForPreTraining, BertModel,
-        BertSelfOutput, BertIntermediate, BertOutput,
-        BertLMPredictionHead, BertLayerNorm, gelu
-    )
-    from transformers.configuration_bert import BertConfig  # noqa
-
-    hf_flag = 'new'
-    TRANSFORMER_VERSION = TransformerVersion.TRANSFORMERS
+t = (
+    BertConfig,
+    BertForMaskedLM,
+    BertForPreTraining,
+    BertModel,
+    BertTokenizer,
+    BertSelfOutput,
+    BertIntermediate,
+    BertOutput,
+    BertLMPredictionHead,
+    BertLayerNorm,
+    gelu,
+)

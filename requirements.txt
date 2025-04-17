@@ -1,0 +1,22 @@
+# 基于 TaBERT/scripts/env.yml 生成的依赖项列表
+# python==3.6
+# jupyter
+numpy
+pandas
+torch #==1.3
+# torchvision
+# cython
+tqdm
+# spacy # spaCy是用于高级自然语言处理的开源软件库，以Python和Cython编程语言编写
+-f https://data.pyg.org/whl/torch-2.6.0+cu124.html # 安装 binary wheel
+torch-scatter # 直接安装需编译
+# torch-scatter #==1.3.2
+# msgpack
+fairseq #==0.8.0 # Facebook AI Research Sequence-to-Sequence Toolkit written in Python.
+transformers
+
+# 以下疑似仅训练需要, 但由于耦合也需要安装
+h5py # H5Py是Python中一个重要的用于读写HDF5格式文件的库. HDF5（Hierarchical Data Format version 5）是一种用于存储和组织大量数据的文件格式
+ujson
+redis
+pyzmq

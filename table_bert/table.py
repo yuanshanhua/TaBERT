@@ -5,10 +5,11 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import List, Dict, Any, Union
+from typing import Any, Dict, List, Union
+
 import pandas as pd
 
-from table_bert.utils import BertTokenizer
+from .utils import BertTokenizer
 
 
 class Column(object):
@@ -18,10 +19,10 @@ class Column(object):
         type: str,
         sample_value: Any = None,
         is_primary_key: bool = False,
-        foreign_key: 'Column' = None,
+        foreign_key: "Column" = None,
         name_tokens: List[str] = None,
         sample_value_tokens: List[str] = None,
-        **kwargs
+        **kwargs,
     ):
         self.name = name
         self.name_tokens = name_tokens
@@ -37,19 +38,17 @@ class Column(object):
             setattr(self, key, val)
 
     def copy(self):
-        return Column(
-            **self.to_dict()
-        )
+        return Column(**self.to_dict())
 
     def to_dict(self):
         data = {
-            'name': self.name,
-            'name_tokens': self.name_tokens,
-            'type': self.type,
-            'sample_value': self.sample_value,
-            'sample_value_tokens': self.sample_value_tokens,
-            'is_primary_key': self.is_primary_key,
-            'foreign_key': self.foreign_key
+            "name": self.name,
+            "name_tokens": self.name_tokens,
+            "type": self.type,
+            "sample_value": self.sample_value,
+            "sample_value_tokens": self.sample_value_tokens,
+            "is_primary_key": self.is_primary_key,
+            "foreign_key": self.foreign_key,
         }
 
         for key in self.fields:
@@ -87,19 +86,14 @@ class Column(object):
         return not self.__eq__(other)
 
     def __repr__(self):
-        return f'Column[name={self.name}, type={self.type}]'
+        return f"Column[name={self.name}, type={self.type}]"
 
     __str__ = __repr__
 
 
 class Table(object):
     def __init__(
-        self,
-        id,
-        header: List[Column],
-        data: Union[List[Dict], List[List]] = None,
-        name: str = None,
-        **kwargs
+        self, id, header: List[Column], data: Union[List[Dict], List[List]] = None, name: str = None, **kwargs
     ):
         self.id = id
         self.name = name
@@ -119,20 +113,18 @@ class Table(object):
         for column in self.header:
             column.name_tokens = tokenizer.tokenize(column.name)
             if column.sample_value is not None:
-                column.sample_value_tokens = tokenizer.tokenize(
-                    str(column.sample_value))
+                column.sample_value_tokens = tokenizer.tokenize(str(column.sample_value))
 
         tokenized_rows = [
             {k: tokenizer.tokenize(str(v)) for k, v in row.items()}
             if isinstance(row, dict)
             else [tokenizer.tokenize(str(v)) for v in row]
-
             for row in self.data
         ]
 
         self.data = tokenized_rows
 
-        setattr(self, 'tokenized', True)
+        setattr(self, "tokenized", True)
 
         return self
 
@@ -152,13 +144,7 @@ class Table(object):
     @property
     def as_row_list(self):
         if len(self) > 0 and isinstance(self.data[0], dict):
-            return [
-                [
-                    row[column.name]
-                    for column in self.header
-                ]
-                for row in self.data
-            ]
+            return [[row[column.name] for column in self.header] for row in self.data]
 
         return self.data
 
@@ -167,30 +153,18 @@ class Table(object):
         columns = [column.name for column in self.header]
 
         if tokenizer:
-            row_data = [
-                [
-                    ' '.join(tokenizer.tokenize(str(cell)))
-                    for cell in row
-                ]
-                for row in row_data
-            ]
+            row_data = [[" ".join(tokenizer.tokenize(str(cell))) for cell in row] for row in row_data]
 
-            columns = [' '.join(tokenizer.tokenize(str(column))) for column in columns]
+            columns = [" ".join(tokenizer.tokenize(str(column))) for column in columns]
         elif detokenize:
-            row_data = [
-                [
-                    ' '.join(cell).replace(' ##', '')
-                    for cell in row
-                ]
-                for row in row_data
-            ]
+            row_data = [[" ".join(cell).replace(" ##", "") for cell in row] for row in row_data]
 
         df = pd.DataFrame(row_data, columns=columns)
 
         return df
 
     def __repr__(self):
-        column_names =  ', '.join(col.name for col in self.header)
-        return f'Table {self.id} [{column_names} | {len(self)} rows]'
+        column_names = ", ".join(col.name for col in self.header)
+        return f"Table {self.id} [{column_names} | {len(self)} rows]"
 
     __str__ = __repr__

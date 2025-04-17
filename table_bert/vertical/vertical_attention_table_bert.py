@@ -5,32 +5,33 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import Tuple
 import gc
 import math
 import sys
-import numpy as np
-from tqdm import tqdm
+from typing import Tuple
 
 import torch
 import torch.nn as nn
-
-from torch_scatter import scatter_mean
 from fairseq import distributed_utils
+from torch_scatter import scatter_mean
+from tqdm import tqdm
 
-from table_bert.table import Column
-from table_bert.utils import (
-    BertConfig, BertForPreTraining, BertForMaskedLM,
-    BertSelfOutput, BertIntermediate, BertOutput,
-    BertLMPredictionHead, BertLayerNorm,
+from ..table import *
+from ..utils import (
+    TRANSFORMER_VERSION,
+    BertForMaskedLM,
+    BertIntermediate,
+    BertLayerNorm,
+    BertLMPredictionHead,
+    BertOutput,
+    BertSelfOutput,
+    TransformerVersion,
     gelu,
-    TransformerVersion, TRANSFORMER_VERSION
 )
-from table_bert.vanilla_table_bert import VanillaTableBert, VanillaTableBertInputFormatter, TableBertConfig
-from table_bert.table import *
-from table_bert.vertical.config import VerticalAttentionTableBertConfig
-from table_bert.vertical.input_formatter import VerticalAttentionTableBertInputFormatter
-from table_bert.vertical.dataset import collate
+from ..vanilla_table_bert import TableBertConfig, VanillaTableBert
+from .config import VerticalAttentionTableBertConfig
+from .dataset import collate
+from .input_formatter import VerticalAttentionTableBertInputFormatter
 
 
 class VerticalEmbeddingLayer(nn.Module):
@@ -59,7 +60,8 @@ class VerticalSelfAttention(nn.Module):
         if config.hidden_size % config.num_vertical_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
-                "heads (%d)" % (config.hidden_size, config.num_vertical_attention_heads))
+                "heads (%d)" % (config.hidden_size, config.num_vertical_attention_heads)
+            )
 
         self.num_attention_heads = config.num_vertical_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_vertical_attention_heads)
@@ -132,7 +134,7 @@ class BertVerticalLayer(nn.Module):
 class SpanBasedPrediction(nn.Module):
     def __init__(self, config: TableBertConfig, prediction_layer: BertLMPredictionHead):
         super(SpanBasedPrediction, self).__init__()
-        
+
         self.dense1 = nn.Linear(config.hidden_size * 2, config.hidden_size, bias=False)
         self.layer_norm1 = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dense2 = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
@@ -141,22 +143,9 @@ class SpanBasedPrediction(nn.Module):
         self.prediction = prediction_layer
 
     def forward(self, span_representation, position_embedding) -> torch.Tensor:
-        h = self.layer_norm1(
-            gelu(
-                self.dense1(
-                    torch.cat(
-                        [span_representation, position_embedding],
-                        dim=-1
-                    )
-                )
-            )
-        )
+        h = self.layer_norm1(gelu(self.dense1(torch.cat([span_representation, position_embedding], dim=-1))))
 
-        token_representation = self.layer_norm2(
-            gelu(
-                self.dense2(h)
-            )
-        )
+        token_representation = self.layer_norm2(gelu(self.dense2(h)))
 
         scores = self.prediction(token_representation)
 
@@ -166,11 +155,7 @@ class SpanBasedPrediction(nn.Module):
 class VerticalAttentionTableBert(VanillaTableBert):
     CONFIG_CLASS = VerticalAttentionTableBertConfig
 
-    def __init__(
-        self,
-        config: VerticalAttentionTableBertConfig,
-        **kwargs
-    ):
+    def __init__(self, config: VerticalAttentionTableBertConfig, **kwargs):
         super(VanillaTableBert, self).__init__(config, **kwargs)
 
         self._bert_model = BertForMaskedLM.from_pretrained(config.base_model_name)
@@ -181,34 +166,34 @@ class VerticalAttentionTableBert(VanillaTableBert):
             self.span_based_prediction = SpanBasedPrediction(config, self._bert_model.cls.predictions)
 
         self.vertical_embedding_layer = VerticalEmbeddingLayer()
-        self.vertical_transformer_layers = nn.ModuleList([
-            BertVerticalLayer(self.config)
-            for _ in range(self.config.num_vertical_layers)
-        ])
+        self.vertical_transformer_layers = nn.ModuleList(
+            [BertVerticalLayer(self.config) for _ in range(self.config.num_vertical_layers)]
+        )
 
         if config.initialize_from:
-            print(f'Loading initial parameters from {config.initialize_from}', file=sys.stderr)
-            initial_state_dict = torch.load(config.initialize_from, map_location='cpu')
-            if not any(key.startswith('_bert_model') for key in initial_state_dict):
-                print('warning: loading model from an old version', file=sys.stderr)
-                bert_model = BertForMaskedLM.from_pretrained(
-                    config.base_model_name,
-                    state_dict=initial_state_dict
-                )
+            print(f"Loading initial parameters from {config.initialize_from}", file=sys.stderr)
+            initial_state_dict = torch.load(config.initialize_from, map_location="cpu")
+            if not any(key.startswith("_bert_model") for key in initial_state_dict):
+                print("warning: loading model from an old version", file=sys.stderr)
+                bert_model = BertForMaskedLM.from_pretrained(config.base_model_name, state_dict=initial_state_dict)
                 self._bert_model = bert_model
             else:
                 load_result = self.load_state_dict(initial_state_dict, strict=False)
                 if load_result.missing_keys:
-                    print(f'warning: missing keys: {load_result.missing_keys}', file=sys.stderr)
+                    print(f"warning: missing keys: {load_result.missing_keys}", file=sys.stderr)
                 if load_result.unexpected_keys:
-                    print(f'warning: unexpected keys: {load_result.unexpected_keys}', file=sys.stderr)
+                    print(f"warning: unexpected keys: {load_result.unexpected_keys}", file=sys.stderr)
 
         added_modules = [self.vertical_embedding_layer, self.vertical_transformer_layers]
         if config.predict_cell_tokens:
-            added_modules.extend([
-                self.span_based_prediction.dense1, self.span_based_prediction.dense2,
-                self.span_based_prediction.layer_norm1, self.span_based_prediction.layer_norm2
-            ])
+            added_modules.extend(
+                [
+                    self.span_based_prediction.dense1,
+                    self.span_based_prediction.dense2,
+                    self.span_based_prediction.layer_norm1,
+                    self.span_based_prediction.layer_norm2,
+                ]
+            )
 
         for module in added_modules:
             if TRANSFORMER_VERSION == TransformerVersion.TRANSFORMERS:
@@ -223,9 +208,13 @@ class VerticalAttentionTableBert(VanillaTableBert):
     # noinspection PyMethodOverriding
     def forward(
         self,
-        input_ids: torch.Tensor, segment_ids: torch.Tensor,
-        context_token_positions: torch.Tensor, column_token_position_to_column_ids: torch.Tensor,
-        sequence_mask: torch.Tensor, context_token_mask: torch.Tensor, table_mask: torch.Tensor,
+        input_ids: torch.Tensor,
+        segment_ids: torch.Tensor,
+        context_token_positions: torch.Tensor,
+        column_token_position_to_column_ids: torch.Tensor,
+        sequence_mask: torch.Tensor,
+        context_token_mask: torch.Tensor,
+        table_mask: torch.Tensor,
         # masked_lm_labels: torch.Tensor = None
         masked_context_token_labels: torch.Tensor = None,
         masked_column_token_column_ids: torch.Tensor = None,
@@ -234,7 +223,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
         masked_cell_token_positions: torch.Tensor = None,
         masked_cell_token_column_ids: torch.Tensor = None,
         masked_cell_token_labels: torch.Tensor = None,
-        **kwargs
+        **kwargs,
     ):
         """
 
@@ -266,7 +255,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
         # (batch_size * max_row_num, sequence_len, hidden_size)
         # (sequence_output, pooler_output)
         if TRANSFORMER_VERSION == TransformerVersion.PYTORCH_PRETRAINED_BERT:
-            kwargs = {'output_all_encoded_layers': False}
+            kwargs = {"output_all_encoded_layers": False}
         else:
             kwargs = {}
 
@@ -274,7 +263,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
             input_ids=flattened_input_ids,
             token_type_ids=flattened_segment_ids,
             attention_mask=flattened_sequence_mask,
-            **kwargs
+            **kwargs,
         )
 
         # torch.save(
@@ -291,7 +280,10 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         # expand to the same size as `bert_output`
         column_token_to_column_id_expanded = column_token_position_to_column_ids.unsqueeze(-1).expand(
-            -1, -1, -1, bert_output.size(-1)  # (batch_size, max_row_num, sequence_len, hidden_size)
+            -1,
+            -1,
+            -1,
+            bert_output.size(-1),  # (batch_size, max_row_num, sequence_len, hidden_size)
         )
 
         # (batch_size, max_row_num, max_column_num, hidden_size)
@@ -300,7 +292,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
             src=bert_output,
             index=column_token_to_column_id_expanded,
             dim=-2,  # over `sequence_len`
-            dim_size=max_column_num + 1   # last dimension is the used for collecting unused entries
+            dim_size=max_column_num + 1,  # last dimension is the used for collecting unused entries
         )
         table_encoding = table_encoding[:, :, :-1, :] * table_mask.unsqueeze(-1)
 
@@ -317,10 +309,11 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         # perform vertical attention
         context_encoding, schema_encoding, final_table_encoding = self.vertical_transform(
-            context_encoding, context_token_mask, table_encoding, table_mask)
+            context_encoding, context_token_mask, table_encoding, table_mask
+        )
 
         if masked_column_token_labels is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction='sum')
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-1, reduction="sum")
 
             # context MLM loss
             context_token_scores = self._bert_model.cls.predictions(context_encoding)
@@ -328,17 +321,23 @@ class VerticalAttentionTableBert(VanillaTableBert):
             # table cell span prediction loss
             if self.config.predict_cell_tokens:
                 # (batch_size, max_row_num, max_masked_cell_token_num)
-                masked_cell_token_position_embedding = self.bert.embeddings.position_embeddings(masked_cell_token_positions)
+                masked_cell_token_position_embedding = self.bert.embeddings.position_embeddings(
+                    masked_cell_token_positions
+                )
                 # (batch_size, max_row_num, max_masked_cell_token_num)
                 masked_cell_representation = torch.gather(
                     final_table_encoding,
                     dim=2,
-                    index=masked_cell_token_column_ids.unsqueeze(-1).expand(-1, -1, -1, bert_output.size(-1))
+                    index=masked_cell_token_column_ids.unsqueeze(-1).expand(-1, -1, -1, bert_output.size(-1)),
                 )
                 # (batch_size, max_row_num, max_masked_cell_token_num, vocab_size)
-                cell_token_scores = self.span_based_prediction(masked_cell_representation, masked_cell_token_position_embedding)
+                cell_token_scores = self.span_based_prediction(
+                    masked_cell_representation, masked_cell_token_position_embedding
+                )
                 # scalar
-                masked_cell_token_loss = loss_fct(cell_token_scores.view(-1, self.config.vocab_size), masked_cell_token_labels.view(-1))
+                masked_cell_token_loss = loss_fct(
+                    cell_token_scores.view(-1, self.config.vocab_size), masked_cell_token_labels.view(-1)
+                )
                 masked_cell_token_num = masked_cell_token_labels.ne(-1).sum().item()
 
             # table schema MLM loss
@@ -346,16 +345,20 @@ class VerticalAttentionTableBert(VanillaTableBert):
             column_token_span_representation = torch.gather(
                 schema_encoding,
                 dim=1,
-                index=masked_column_token_column_ids.unsqueeze(-1).expand(-1, -1, bert_output.size(-1))
+                index=masked_column_token_column_ids.unsqueeze(-1).expand(-1, -1, bert_output.size(-1)),
             )
             # column_token_position_embedding = self.bert.embedding.position_embeddings(masked_column_token_positions)
             # column_token_scores = self.column_token_prediction(column_token_span_representation, column_token_position_embedding)
             column_token_scores = self._bert_model.cls.predictions(column_token_span_representation)
 
-            masked_context_token_loss = loss_fct(context_token_scores.view(-1, self.config.vocab_size), masked_context_token_labels.view(-1))
+            masked_context_token_loss = loss_fct(
+                context_token_scores.view(-1, self.config.vocab_size), masked_context_token_labels.view(-1)
+            )
             masked_context_token_num = masked_context_token_labels.ne(-1).sum().item()
 
-            masked_column_token_loss = loss_fct(column_token_scores.view(-1, self.config.vocab_size), masked_column_token_labels.view(-1))
+            masked_column_token_loss = loss_fct(
+                column_token_scores.view(-1, self.config.vocab_size), masked_column_token_labels.view(-1)
+            )
             masked_column_token_num = masked_column_token_labels.ne(-1).sum().item()
 
             loss = masked_context_token_loss + masked_column_token_loss
@@ -366,13 +369,13 @@ class VerticalAttentionTableBert(VanillaTableBert):
             masked_column_token_ppl = math.exp(masked_column_token_loss / masked_column_token_num)
 
             logging_info = {
-                'sample_size': masked_context_token_num + masked_column_token_num,
-                'masked_context_token_loss': masked_context_token_loss,
-                'masked_context_token_num': masked_context_token_num,
-                'masked_context_token_ppl': masked_context_token_ppl,
-                'masked_column_token_loss': masked_column_token_loss,
-                'masked_column_token_num': masked_column_token_num,
-                'masked_column_token_ppl': masked_column_token_ppl,
+                "sample_size": masked_context_token_num + masked_column_token_num,
+                "masked_context_token_loss": masked_context_token_loss,
+                "masked_context_token_num": masked_context_token_num,
+                "masked_context_token_ppl": masked_context_token_ppl,
+                "masked_column_token_loss": masked_column_token_loss,
+                "masked_column_token_num": masked_column_token_num,
+                "masked_column_token_ppl": masked_column_token_ppl,
             }
 
             if self.config.predict_cell_tokens:
@@ -381,13 +384,13 @@ class VerticalAttentionTableBert(VanillaTableBert):
                 masked_cell_token_loss = masked_cell_token_loss.item()
                 masked_cell_token_ppl = math.exp(masked_cell_token_loss / masked_cell_token_num)
 
-                logging_info['masked_cell_token_loss'] = masked_cell_token_loss
-                logging_info['masked_cell_token_num'] = masked_cell_token_num
-                logging_info['masked_cell_token_ppl'] = masked_cell_token_ppl
+                logging_info["masked_cell_token_loss"] = masked_cell_token_loss
+                logging_info["masked_cell_token_num"] = masked_cell_token_num
+                logging_info["masked_cell_token_ppl"] = masked_cell_token_ppl
 
-                logging_info['sample_size'] += masked_cell_token_num
+                logging_info["sample_size"] += masked_cell_token_num
 
-            logging_info['ppl'] = math.exp(loss.item() / logging_info['sample_size'])
+            logging_info["ppl"] = math.exp(loss.item() / logging_info["sample_size"])
 
             return loss, logging_info
         else:
@@ -395,10 +398,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
     def vertical_transform(self, context_encoding, context_token_mask, table_encoding, table_mask):
         # (batch_size, max_row_num, sequence_len)
-        sequence_mask = torch.cat(
-            [context_token_mask, table_mask],
-            dim=-1
-        )
+        sequence_mask = torch.cat([context_token_mask, table_mask], dim=-1)
 
         # (batch_size, sequence_len, 1, max_row_num, 1)
         attention_mask = sequence_mask.permute(0, 2, 1)[:, :, None, :, None]
@@ -415,8 +415,8 @@ class VerticalAttentionTableBert(VanillaTableBert):
 
         last_hidden_states = vertical_layer_outputs[-1] * sequence_mask.unsqueeze(-1)
 
-        last_context_encoding = last_hidden_states[:, :, :context_encoding.size(2), :]
-        last_table_encoding = last_hidden_states[:, :, context_encoding.size(2):, :]
+        last_context_encoding = last_hidden_states[:, :, : context_encoding.size(2), :]
+        last_table_encoding = last_hidden_states[:, :, context_encoding.size(2) :, :]
 
         # mean-pool last encoding
 
@@ -430,19 +430,13 @@ class VerticalAttentionTableBert(VanillaTableBert):
         return mean_pooled_context_encoding, mean_pooled_schema_encoding, last_table_encoding
 
     # noinspection PyUnboundLocalVariable
-    def to_tensor_dict(
-        self,
-        contexts: List[List[str]],
-        tables: List[Table],
-        table_specific_tensors=True
-    ):
+    def to_tensor_dict(self, contexts: List[List[str]], tables: List[Table], table_specific_tensors=True):
         examples = []
         for e_id, (context, table) in enumerate(zip(contexts, tables)):
             instance = self.input_formatter.get_input(context, table)
 
-            for row_inst in instance['rows']:
-                row_inst['token_ids'] = self.tokenizer.convert_tokens_to_ids(row_inst['tokens'])
-
+            for row_inst in instance["rows"]:
+                row_inst["token_ids"] = self.tokenizer.convert_tokens_to_ids(row_inst["tokens"])
 
             examples.append(instance)
 
@@ -456,17 +450,14 @@ class VerticalAttentionTableBert(VanillaTableBert):
         gc.collect()
 
         keys = [
-            'masked_context_token_loss',
-            'masked_context_token_num',
-            'masked_column_token_loss',
-            'masked_column_token_num'
+            "masked_context_token_loss",
+            "masked_context_token_num",
+            "masked_column_token_loss",
+            "masked_column_token_num",
         ]
 
         if self.config.predict_cell_tokens:
-            keys += [
-                'masked_cell_token_loss',
-                'masked_cell_token_num'
-            ]
+            keys += ["masked_cell_token_loss", "masked_cell_token_num"]
 
         was_training = self.training
         self.eval()
@@ -484,51 +475,40 @@ class VerticalAttentionTableBert(VanillaTableBert):
         if was_training:
             self.train()
 
-        stats = {
-            k: sum(x[k] for x in logging_info_list)
-            for k in keys
-        }
+        stats = {k: sum(x[k] for x in logging_info_list) for k in keys}
 
         # handel distributed evaluation
         if args.multi_gpu:
             stats = distributed_utils.all_gather_list(stats)
-            stats = {
-                k: sum(x[k] for x in stats)
-                for k in keys
-            }
+            stats = {k: sum(x[k] for x in stats) for k in keys}
 
         valid_result = {
-            'masked_context_token_ppl': math.exp(stats['masked_context_token_loss'] / stats['masked_context_token_num']),
-            'masked_column_token_ppl': math.exp(stats['masked_column_token_loss'] / stats['masked_column_token_num'])
+            "masked_context_token_ppl": math.exp(
+                stats["masked_context_token_loss"] / stats["masked_context_token_num"]
+            ),
+            "masked_column_token_ppl": math.exp(stats["masked_column_token_loss"] / stats["masked_column_token_num"]),
         }
 
         if self.config.predict_cell_tokens:
-            valid_result['masked_cell_token_ppl'] = math.exp(stats['masked_cell_token_loss'] / stats['masked_cell_token_num'])
+            valid_result["masked_cell_token_ppl"] = math.exp(
+                stats["masked_cell_token_loss"] / stats["masked_cell_token_num"]
+            )
 
         return valid_result
 
     def encode(
-            self,
-            contexts: List[List[str]],
-            tables: List[Table],
-            return_bert_encoding: bool = False
+        self, contexts: List[List[str]], tables: List[Table], return_bert_encoding: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
-        assert return_bert_encoding is False, 'VerticalTableBert does not support `return_bert_encoding=True`'
+        assert return_bert_encoding is False, "VerticalTableBert does not support `return_bert_encoding=True`"
 
         tensor_dict, instances = self.to_tensor_dict(contexts, tables)
-        tensor_dict = {
-            k: v.to(self.device) if torch.is_tensor(v) else v
-            for k, v in tensor_dict.items()
-        }
+        tensor_dict = {k: v.to(self.device) if torch.is_tensor(v) else v for k, v in tensor_dict.items()}
 
         context_encoding, schema_encoding = self.forward(**tensor_dict)
 
-        tensor_dict['context_token_mask'] = tensor_dict['context_token_mask'][:, 0, :]
-        tensor_dict['column_mask'] = tensor_dict['table_mask'][:, 0, :]
+        tensor_dict["context_token_mask"] = tensor_dict["context_token_mask"][:, 0, :]
+        tensor_dict["column_mask"] = tensor_dict["table_mask"][:, 0, :]
 
-        info = {
-            'tensor_dict': tensor_dict,
-            'instances': instances
-        }
+        info = {"tensor_dict": tensor_dict, "instances": instances}
 
         return context_encoding, schema_encoding, info
