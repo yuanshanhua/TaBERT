@@ -263,6 +263,7 @@ class VerticalAttentionTableBert(VanillaTableBert):
             input_ids=flattened_input_ids,
             token_type_ids=flattened_segment_ids,
             attention_mask=flattened_sequence_mask,
+            return_dict=False,
             **kwargs,
         )
 

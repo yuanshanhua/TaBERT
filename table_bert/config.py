@@ -211,7 +211,7 @@ class TableBertConfig(SimpleNamespace):
         return vars(self)
 
     def get_default_values_for_parameters(self):
-        signature = inspect.signature(self.__init__)
+        signature = inspect.signature(self.__init__)  # 此代码导致 self 是子类时无法处理父类参数
 
         default_args = OrderedDict(
             (k, v.default) for k, v in signature.parameters.items() if v.default is not inspect.Parameter.empty

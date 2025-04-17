@@ -194,10 +194,9 @@ class TableBertModel(nn.Module):
 
             config = config_cls.from_file(config_file)
 
-        overriding_config = config.extract_args(kwargs, pop=True)
-        if len(overriding_config) > 0:
-            config = config.with_new_args(**overriding_config)
-
+        # overriding_config = config.extract_args(kwargs, pop=True)
+        # if len(overriding_config) > 0:
+        config = config.with_new_args(**kwargs)
         model_kwargs = kwargs
 
         model_cls = (
