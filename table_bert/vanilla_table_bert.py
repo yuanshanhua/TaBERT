@@ -79,7 +79,7 @@ class VanillaTableBert(TableBertModel):
             input_ids=input_ids,
             token_type_ids=segment_ids,
             attention_mask=attention_mask,
-            return_dict=False,  # 使 sequence_output 是 tersor 而不是 BaseModelOutputWithPoolingAndCrossAttentions
+            return_dict=False,  # 使 sequence_output 是 tensor 而不是 BaseModelOutputWithPoolingAndCrossAttentions
             **kwargs,
         )
         assert type(sequence_output) is torch.Tensor, f"sequence_output type: {type(sequence_output)}"
